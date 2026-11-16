@@ -37,17 +37,21 @@ this from a speed demo into a correctness story.
 
 ## Results
 
-### Properties: 15/15 shapes hold
+### Properties: 18 checks, all passing
+
+11 triangulation shapes, 3 flattening curves, 4 degenerate cases.
 
 | Shape | Triangles | Expected | Σ triangle area | Polygon area |
 |---|---|---|---|---|
 | 3-gon | 1 | 1 | 3247.595 | 3247.595 |
 | 4-gon | 2 | 2 | 5000.000 | 5000.000 |
+| 5-gon | 3 | 3 | 5944.103 | 5944.103 |
 | 8-gon | 6 | 6 | 7071.069 | 7071.068 |
 | 16-gon | 14 | 14 | 7653.669 | 7653.669 |
 | 64-gon | 62 | 62 | 7841.371 | 7841.371 |
 | 128-gon | 126 | 126 | 7850.828 | 7850.828 |
 | 3-star | 4 | 4 | 2598.076 | 2598.076 |
+| 4-star | 6 | 6 | 2828.427 | 2828.427 |
 | 5-star | 8 | 8 | 2938.927 | 2938.926 |
 | 8-star | 14 | 14 | 3061.468 | 3061.467 |
 
