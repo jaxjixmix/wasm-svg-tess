@@ -1,0 +1,73 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: unit tests + geometric properties
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Unit tests
+        run: cargo test -p tess --verbose
+
+      - name: Build wasm
+        run: cargo build -p wasm --release --target wasm32-unknown-unknown
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The load-bearing claim: area conservation, centroid coverage, and the
+      # n-2 count identity hold for every fixture. These properties hold for ANY
+      # correct triangulation, so they cannot be satisfied by sharing my bugs.
+      - name: Geometric properties through wasm
+        run: node scripts/verify.mjs
+
+      # The harness lives in a module so it can be run here. Keeping it inside
+      # index.html is what let a wrong-arity call hide in wasm-image-lab.
+      - name: Browser harness end-to-end
+        run: node scripts/verify-browser-harness.mjs
+
+      - name: Upload wasm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: svg-tess-wasm
+          path: target/wasm32-unknown-unknown/release/wasm.wasm
+          if-no-files-found: error
+
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets -- -D warnings

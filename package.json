@@ -1,0 +1,14 @@
+{
+  "name": "wasm-svg-tess",
+  "version": "0.1.0",
+  "description": "SVG path tessellation in Rust/WASM, verified by geometric properties independent of implementation.",
+  "type": "module",
+  "scripts": {
+    "build:wasm": "cargo build -p wasm --release --target wasm32-unknown-unknown && mkdir -p web/pkg && cp target/wasm32-unknown-unknown/release/wasm.wasm web/pkg/tess.wasm",
+    "verify": "node scripts/verify.mjs",
+    "verify:harness": "node scripts/verify-browser-harness.mjs",
+    "serve": "npx --yes http-server web -p 8084 -c-1"
+  },
+  "license": "MIT",
+  "private": true
+}

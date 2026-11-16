@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wasm-svg-tess — SVG tessellation in Rust</title>
+<style>
+  :root{--bg:#0d1117;--panel:#161b22;--border:#30363d;--text:#e6edf3;
+    --dim:#8b949e;--accent:#f0a020;--good:#3fb950;--bad:#f85149;--tri:#2a4d6e}
+  *{box-sizing:border-box}
+  body{margin:0;padding:2rem;background:var(--bg);color:var(--text);
+    font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}
+  h1{font-size:1.4rem;margin:0 0 .25rem}
+  .sub{color:var(--dim);margin-bottom:2rem;font-size:.9rem}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:8px;
+    padding:1rem 1.25rem;margin-bottom:1.5rem}
+  button{background:var(--accent);color:#0d1117;border:0;border-radius:6px;
+    padding:.55rem 1.1rem;font:inherit;font-weight:700;cursor:pointer}
+  button:disabled{opacity:.5;cursor:default}
+  table{width:100%;border-collapse:collapse;font-size:.83rem}
+  th,td{text-align:left;padding:.3rem .5rem;border-bottom:1px solid var(--border)}
+  th{color:var(--dim);font-weight:600}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .ok{color:var(--good)} .fail{color:var(--bad)}
+  #log{white-space:pre-wrap;color:var(--dim);font-size:.78rem;max-height:12rem;overflow:auto}
+  canvas{background:#0d1117;border:1px solid var(--border);border-radius:6px;width:100%}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+  @media(max-width:780px){.cols{grid-template-columns:1fr}}
+  code{color:var(--accent)}
+</style>
+</head>
+<body>
+<h1>wasm-svg-tess</h1>
+<div class="sub">SVG path flattening + polygon triangulation in Rust→WASM, verified by geometric properties that hold for <em>any</em> correct triangulation.</div>
+
+<div class="panel">
+  <button id="run">Run checks + benchmark</button>
+  <span id="status" style="color:var(--dim);margin-left:1rem">not started</span>
+</div>
+
+<div class="panel">
+  <div style="color:var(--dim);font-size:.78rem;margin-bottom:.5rem">
+    PROPERTIES — area conservation, centroid coverage, n−2 count identity
+  </div>
+  <table id="props"><thead>
+    <tr><th>Shape</th><th class="num">Tris</th><th class="num">Expect</th>
+    <th class="num">Σ area</th><th class="num">Polygon</th><th>Result</th></tr>
+  </thead><tbody></tbody></table>
+</div>
+
+<div class="panel">
+  <div style="color:var(--dim);font-size:.78rem;margin-bottom:.5rem">TIMING — median of 15 runs (native Rust path only)</div>
+  <table id="times"><thead>
+    <tr><th>Input</th><th class="num">ms</th><th class="num">ms / element</th></tr>
+  </thead><tbody></tbody></table>
+</div>
+
+<div class="panel">
+  <div style="color:var(--dim);font-size:.78rem;margin-bottom:.5rem">VISUAL — triangles drawn with edges exposed</div>
+  <div class="cols">
+    <div>
+      <div style="color:var(--dim);font-size:.75rem;margin-bottom:.35rem">star (concave, ear clipping)</div>
+      <canvas id="cvStar" width="400" height="400"></canvas>
+    </div>
+    <div>
+      <div style="color:var(--dim);font-size:.75rem;margin-bottom:.35rem">cubic curves (flattened)</div>
+      <canvas id="cvCurve" width="400" height="400"></canvas>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div style="color:var(--dim);font-size:.78rem;margin-bottom:.5rem">LOG</div>
+  <div id="log"></div>
+</div>
+
+<script type="module">
+import { runHarness, checkExports, tessellate, starPts, toPath } from './js/tess.js';
+
+const logEl = document.getElementById('log');
+const statusEl = document.getElementById('status');
+const btn = document.getElementById('run');
+const log = (m) => { logEl.textContent += m + '\n'; };
+
+async function loadWasm() {
+  const r = await fetch(`./pkg/tess.wasm?v=${Date.now()}`);
+  if (!r.ok) throw new Error(`fetch failed ${r.status} — run npm run build:wasm`);
+  const { instance } = await WebAssembly.instantiate(await r.arrayBuffer(), {});
+  return instance.exports;
+}
+
+btn.addEventListener('click', async () => {
+  btn.disabled = true; logEl.textContent = ''; statusEl.textContent = 'loading…';
+  try {
+    const ex = await loadWasm();
+    log(`wasm loaded — memory ${(ex.memory.buffer.byteLength / 1048576).toFixed(1)} MB, tolerance ${ex.tolerance()}`);
+
+    const arityErr = checkExports(ex);
+    if (arityErr) throw new Error(arityErr);
+
+    statusEl.textContent = 'running…';
+    const { properties, timings } = runHarness(ex, { log });
+
+    renderProps(properties);
+    renderTimes(timings);
+    drawStar(ex);
+    drawCurve(ex);
+
+    const failed = properties.filter((p) => !p.ok).length;
+    statusEl.textContent = failed ? `${failed} failures` : 'all properties hold';
+  } catch (e) {
+    log('ERROR: ' + (e?.stack || e));
+    statusEl.textContent = 'failed';
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+function renderProps(properties) {
+  const body = document.querySelector('#props tbody');
+  body.innerHTML = '';
+  for (const p of properties) {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td>${p.name}</td>` +
+      `<td class="num">${p.count}</td>` +
+      `<td class="num">${p.want}</td>` +
+      `<td class="num">${p.triArea.toFixed(2)}</td>` +
+      `<td class="num">${p.polyArea.toFixed(2)}</td>` +
+      `<td class="${p.ok ? 'ok' : 'fail'}">${p.ok ? 'holds' : p.detail}</td>`;
+    body.appendChild(tr);
+  }
+}
+
+function renderTimes(timings) {
+  const body = document.querySelector('#times tbody');
+  body.innerHTML = '';
+  for (const t of timings) {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td>${t.label}</td>` +
+      `<td class="num">${t.ms.toFixed(3)}</td>` +
+      `<td class="num">${t.perElement.toFixed(4)}</td>`;
+    body.appendChild(tr);
+  }
+}
+
+/** Draw triangles with visible edges so a bad triangulation is obvious. */
+function drawTris(canvas, tris, scale, offX, offY) {
+  const ctx = canvas.getContext('2d');
+  const { width: W, height: H } = canvas;
+  ctx.clearRect(0, 0, W, H);
+
+  for (const t of tris) {
+    ctx.beginPath();
+    ctx.moveTo(t.a.x * scale + offX, t.a.y * scale + offY);
+    ctx.lineTo(t.b.x * scale + offX, t.b.y * scale + offY);
+    ctx.lineTo(t.c.x * scale + offX, t.c.y * scale + offY);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(42,77,110,0.55)';
+    ctx.fill();
+    ctx.strokeStyle = '#4a9eda';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+}
+
+function drawStar(ex) {
+  const pts = starPts(5);
+  const tris = tessellate(ex, toPath(pts));
+  drawTris(document.getElementById('cvStar'), tris, 2.6, 60, 60);
+  log(`star: ${tris.length} triangles (expect ${pts.length - 2})`);
+}
+
+function drawCurve(ex) {
+  const d = 'M20,180 C60,20 140,20 180,180 C220,20 300,20 340,180';
+  const tris = tessellate(ex, d);
+  // The curve path is open, so triangulation may be empty; draw the flattened
+  // polyline instead, which is the part that matters visually.
+  const poly = tessellate(ex, d + ' L340,300 L20,300 Z');
+  drawTris(document.getElementById('cvCurve'), poly, 1.05, 5, 60);
+  log(`curve: ${poly.length} triangles from flattened outline`);
+}
+</script>
+</body>
+</html>
